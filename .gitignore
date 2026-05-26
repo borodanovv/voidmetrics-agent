@@ -1,0 +1,7 @@
+/target/
+/.env
+/.env.local
+/.voidmetrics/
+/.git/
+.DS_Store
+*.log

@@ -1,0 +1,5 @@
+f7006a37b92c37c774130683c6e35bf8272ab38ef0c0c9c18924546bcdbbc7cb  voidmetrics-agent-aarch64-apple-darwin.tar.gz
+7cc14c186e50c0d6cabcf3ac7e5a8433c74baf385d76ebff024a3d43857b4f34  voidmetrics-agent-aarch64-unknown-linux-gnu.tar.gz
+97209f3657c77dceabbdf3ea254b0c74d6efaa467de1a917329232c0076085d6  voidmetrics-agent-x86_64-apple-darwin.tar.gz
+5b25243811dbbad636340f619fd3a4a756590c6536b629338ce2ede6883683bc  voidmetrics-agent-x86_64-pc-windows-msvc.zip
+d39b4d71cd31350d980101f1bb7bb720394d6e008b794090b7d1365b67c2b5cf  voidmetrics-agent-x86_64-unknown-linux-gnu.tar.gz
