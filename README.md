@@ -1,35 +1,69 @@
 # VoidMetrics Agent
 
-Отдельный репозиторий агента VoidMetrics.
+Репозиторий агента `voidmetrics-agent`.
 
-Здесь лежат:
+## Состав
 
-- Rust-исходники `voidmetrics-agent`
-- скрипт сборки релизных архивов
+- исходный код агента на Rust
+- скрипт сборки архивов
 - готовые архивы в [releases](./releases)
-- краткая документация по подключению агента к `core`
 
-## Что важно понимать
+## Назначение
 
-Агенту для работы нужен только WebSocket `core`:
+Агент подключается к `core` по WebSocket:
 
 - `WS /ws`
 
-HTTP-часть нужна оператору или внешнему слою только для установки, скачивания архива и чтения текущего состояния.
+После подключения агент передает:
 
-## Быстрый старт
+- информацию о хосте
+- системные метрики
+- список процессов
+- результаты команд от `core`
 
-1. Скачайте архив из [releases](./releases) или из GitHub Releases.
-2. Распакуйте его.
-3. Запустите агент с URL `core` и токеном.
+## Токен
 
-Локальное подключение:
+Текущая схема авторизации:
+
+- `core` не выдает токен агенту через HTTP
+- агент не получает токен автоматически от `core`
+- токен должен быть передан агенту внешним установщиком, скриптом, env, secret store или файлом
+- `core` только проверяет токен при подключении на `/ws`
+
+Сейчас используются общие install-token значения:
+
+- локальный токен для внутреннего контура
+- внешний токен для внешних машин
+
+Индивидуальный токен на каждого агента в текущей реализации не выдается.
+
+## Автоматическая установка
+
+Последовательность работы:
+
+1. Внешний слой вызывает `GET /api/setup`.
+2. Внешний слой вызывает `GET /api/agent-releases`.
+3. Внешний слой скачивает архив через `GET /api/agent-releases/{file}`.
+4. Внешний слой берет токен из своего секрета.
+5. Внешний слой запускает агент.
+6. Агент подключается к `WS /ws`.
+7. Агент появляется в `GET /api/agents` и `GET /api/agents/{id}`.
+
+Регистрация записи в реестре может выполняться отдельно через:
+
+- `POST /api/registered-agents`
+
+Этот вызов создает запись агента, но не выдает токен.
+
+## Запуск
+
+Локальный контур:
 
 ```bash
 ./voidmetrics-agent --core-url ws://YOUR_CORE_HOST:3000/ws --auth-key YOUR_LOCAL_TOKEN
 ```
 
-Публичное подключение:
+Внешний контур:
 
 ```bash
 ./voidmetrics-agent --core-url wss://YOUR_PUBLIC_HOST/ws --auth-key YOUR_EXTERNAL_TOKEN
@@ -57,103 +91,53 @@ $env:VOIDMETRICS_AGENT_TOKEN = "YOUR_TOKEN"
 .\voidmetrics-agent.exe --daemon
 ```
 
-## Автоматический сценарий установки
+## HTTP и WS endpoints
 
-Текущий API подходит для автоустановки без ручного копирования команд в UI.
-
-Рекомендуемый поток такой:
-
-1. Внешний слой проверяет `GET /api/setup`.
-2. Получает список архивов через `GET /api/agent-releases`.
-3. Скачивает нужный файл через `GET /api/agent-releases/{file}`.
-4. Берёт install-token из своего секрета, env или secret store.
-5. Запускает агент с `--core-url` и `--auth-key`.
-6. После подключения агент сам появляется в live-срезе.
-
-Важно:
-
-- `core` не выдаёт install-token через HTTP;
-- токен надо передавать установщику из безопасного внешнего контура;
-- для текущей версии это правильнее, чем открывать общий токен через публичный API.
-
-Если нужно заранее завести карточку агента в реестре, можно дополнительно вызвать:
-
-- `POST /api/registered-agents`
-
-Пример payload:
-
-```json
-{
-  "name": "node-01",
-  "group_id": "default",
-  "labels": ["prod", "eu-west"],
-  "desired_config": {
-    "interval_seconds": 1,
-    "process_interval_seconds": 2,
-    "process_limit": 220
-  },
-  "install_mode": "standalone"
-}
-```
-
-Этот вызов создаёт запись в реестре, но не выдаёт отдельный токен на агента.
-
-## Какие эндпоинты реально нужны
-
-### Подключение и установка
+### Подключение агента
 
 - `GET /api/setup`
 - `GET /api/agent-releases`
 - `GET /api/agent-releases/{file}`
 - `WS /ws`
 
-### Live API оператора
+### Операторский контур
 
 - `GET /api/agents`
 - `GET /api/agents/{id}`
 - `WS /live`
 
-### Внешний read-only API
+### Внешний read-only контур
 
 - `GET /api/external/agents`
 - `GET /api/external/agents/{id}`
 
-Для внешнего API используйте:
+Заголовок для внешнего read-only API:
 
 ```text
 Authorization: Bearer <VOIDMETRICS_EXTERNAL_AGENT_TOKEN>
 ```
 
-## Один endpoint для статистики
+## Срез статистики
 
-Если нужен единый JSON-срез по машине без лишних routes, используйте:
+Текущий JSON-срез машины:
 
-- операторский контур: `GET /api/agents/{id}`
-- внешний контур: `GET /api/external/agents/{id}`
+- `GET /api/agents/{id}`
+- `GET /api/external/agents/{id}`
 
-Оба ответа уже содержат общий объект `metrics`, где лежат:
+Поля `metrics` содержат:
 
-- CPU: `cpu_usage`, `cpu_cores`, `load_1`, `load_5`, `load_15`
-- RAM: `ram_used`, `ram_total`, `swap_used`, `swap_total`
-- Disk: `disk_used`, `disk_total`, `disk_usage_percent`, `disk_read_bytes`, `disk_written_bytes`
-- Network: `network_received_bytes`, `network_transmitted_bytes`
-- GPU: `gpu_usage_percent`, `gpu_memory_used`, `gpu_temperature_celsius`
+- CPU
+- RAM
+- Swap
+- Disk
+- Network
+- GPU
 
-То есть для CPU, RAM и Disk не нужен отдельный набор endpoint-ов: достаточно одного `GET /api/agents/{id}` или `GET /api/external/agents/{id}`.
+Отдельные HTTP endpoints для CPU, RAM и Disk не используются.
 
-## Что намеренно не включено в эту документацию
+## Параметры запуска
 
-Здесь специально не перечислены:
-
-- history/CSV export routes;
-- operator command/shutdown routes;
-- group CRUD и служебные registry-маршруты.
-
-Они могут использоваться внутренним UI, но не нужны для обычной установки агента и только перегружают публичную документацию.
-
-## Конфигурация агента
-
-CLI-опции:
+CLI:
 
 - `--core-url <ws-url>`
 - `--auth-key <token>`
@@ -181,25 +165,17 @@ CLI-опции:
 
 ## Сборка
 
-Локально:
-
 ```bash
 cargo build --release
 ```
-
-Справка:
 
 ```bash
 cargo run -- --help
 ```
 
-Сборка архивов для текущей платформы:
-
 ```bash
 ./scripts/build-agent-releases.sh
 ```
-
-Полная матрица:
 
 ```bash
 ./scripts/build-agent-releases.sh --all
@@ -207,13 +183,9 @@ cargo run -- --help
 
 ## Docker
 
-Сборка:
-
 ```bash
 docker build -t voidmetrics-agent .
 ```
-
-Запуск:
 
 ```bash
 docker run --rm \
