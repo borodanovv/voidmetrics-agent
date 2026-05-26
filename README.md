@@ -2,129 +2,136 @@
 
 Репозиторий агента `voidmetrics-agent`.
 
-## Состав
-
-- исходный код агента на Rust
-- скрипт сборки архивов
-- готовые архивы в [releases](./releases)
-
 ## Назначение
 
 Агент подключается к `core` по WebSocket:
 
 - `WS /ws`
 
-После подключения агент передает:
+Агент передает:
 
 - информацию о хосте
 - системные метрики
 - список процессов
 - результаты команд от `core`
 
-## Токен
-
-Текущая схема авторизации:
-
-- `core` не выдает токен агенту через HTTP
-- агент не получает токен автоматически от `core`
-- токен должен быть передан агенту внешним установщиком, скриптом, env, secret store или файлом
-- `core` только проверяет токен при подключении на `/ws`
-
-Сейчас используются общие install-token значения:
-
-- локальный токен для внутреннего контура
-- внешний токен для внешних машин
-
-Индивидуальный токен на каждого агента в текущей реализации не выдается.
-
 ## Автоматическая установка
 
-Последовательность работы:
+Последовательность:
 
 1. Внешний слой вызывает `GET /api/setup`.
-2. Внешний слой вызывает `GET /api/agent-releases`.
-3. Внешний слой скачивает архив через `GET /api/agent-releases/{file}`.
-4. Внешний слой берет токен из своего секрета.
-5. Внешний слой запускает агент.
+2. Внешний слой вызывает `POST /api/agent-bootstrap`.
+3. `core` возвращает `agent_id`, `agent_token`, `agent_ws_url`.
+4. Внешний слой скачивает архив через `GET /api/agent-releases/{file}`.
+5. Внешний слой запускает агент с полученными `agent_id`, `agent_token`, `agent_ws_url`.
 6. Агент подключается к `WS /ws`.
 7. Агент появляется в `GET /api/agents` и `GET /api/agents/{id}`.
 
-Регистрация записи в реестре может выполняться отдельно через:
+## Токены
 
-- `POST /api/registered-agents`
+- `bootstrap token` используется только для вызова `POST /api/agent-bootstrap`
+- `agent_token` используется только агентом при подключении к `WS /ws`
+- `core` не отдает shared install-token агенту
+- `core` выдает агенту только новый `agent_token` через bootstrap endpoint
 
-Этот вызов создает запись агента, но не выдает токен.
+Legacy fallback:
 
-## Запуск
+- `VOIDMETRICS_LOCAL_AGENT_TOKEN`
+- `VOIDMETRICS_EXTERNAL_AGENT_TOKEN`
 
-Локальный контур:
+Они остаются совместимыми, но основной поток установки теперь bootstrap-based.
 
-```bash
-./voidmetrics-agent --core-url ws://YOUR_CORE_HOST:3000/ws --auth-key YOUR_LOCAL_TOKEN
+## Bootstrap endpoint
+
+Запрос:
+
+```http
+POST /api/agent-bootstrap
+Authorization: Bearer <BOOTSTRAP_TOKEN>
+Content-Type: application/json
 ```
 
-Внешний контур:
+Body:
+
+```json
+{
+  "name": "node-01",
+  "labels": ["prod"],
+  "install_mode": "standalone",
+  "access_scope": "external"
+}
+```
+
+Ответ:
+
+```json
+{
+  "agent_id": "uuid",
+  "agent_token": "vmk_agent_xxx",
+  "access_scope": "external",
+  "agent_ws_url": "wss://host/ws",
+  "desired_config": {}
+}
+```
+
+## Запуск агента
+
+Ручной запуск:
 
 ```bash
-./voidmetrics-agent --core-url wss://YOUR_PUBLIC_HOST/ws --auth-key YOUR_EXTERNAL_TOKEN
+./voidmetrics-agent --core-url wss://YOUR_HOST/ws --auth-key YOUR_AGENT_TOKEN --agent-id YOUR_AGENT_ID
 ```
 
 Фоновый режим:
 
 ```bash
-./voidmetrics-agent --daemon --core-url ws://YOUR_CORE_HOST:3000/ws --auth-key YOUR_TOKEN
+./voidmetrics-agent --daemon --core-url wss://YOUR_HOST/ws --auth-key YOUR_AGENT_TOKEN --agent-id YOUR_AGENT_ID
 ```
 
-Через переменные окружения:
+Через env:
 
 ```bash
-export VOIDMETRICS_CORE_URL=ws://YOUR_CORE_HOST:3000/ws
-export VOIDMETRICS_AGENT_TOKEN=YOUR_TOKEN
+export VOIDMETRICS_CORE_URL=wss://YOUR_HOST/ws
+export VOIDMETRICS_AGENT_TOKEN=YOUR_AGENT_TOKEN
+export VOIDMETRICS_AGENT_ID=YOUR_AGENT_ID
 ./voidmetrics-agent --daemon
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:VOIDMETRICS_CORE_URL = "ws://YOUR_CORE_HOST:3000/ws"
-$env:VOIDMETRICS_AGENT_TOKEN = "YOUR_TOKEN"
+$env:VOIDMETRICS_CORE_URL = "wss://YOUR_HOST/ws"
+$env:VOIDMETRICS_AGENT_TOKEN = "YOUR_AGENT_TOKEN"
+$env:VOIDMETRICS_AGENT_ID = "YOUR_AGENT_ID"
 .\voidmetrics-agent.exe --daemon
 ```
 
 ## HTTP и WS endpoints
 
-### Подключение агента
-
 - `GET /api/setup`
+- `POST /api/agent-bootstrap`
 - `GET /api/agent-releases`
 - `GET /api/agent-releases/{file}`
 - `WS /ws`
-
-### Операторский контур
-
 - `GET /api/agents`
 - `GET /api/agents/{id}`
-- `WS /live`
-
-### Внешний read-only контур
-
 - `GET /api/external/agents`
 - `GET /api/external/agents/{id}`
 
-Заголовок для внешнего read-only API:
+Внешний read-only API:
 
 ```text
 Authorization: Bearer <VOIDMETRICS_EXTERNAL_AGENT_TOKEN>
 ```
 
-## Срез статистики
+## Срез состояния
 
 Текущий JSON-срез машины:
 
 - `GET /api/agents/{id}`
 - `GET /api/external/agents/{id}`
 
-Поля `metrics` содержат:
+Поле `metrics` содержит:
 
 - CPU
 - RAM
@@ -132,8 +139,6 @@ Authorization: Bearer <VOIDMETRICS_EXTERNAL_AGENT_TOKEN>
 - Disk
 - Network
 - GPU
-
-Отдельные HTTP endpoints для CPU, RAM и Disk не используются.
 
 ## Параметры запуска
 
@@ -145,7 +150,7 @@ CLI:
 - `--agent-id <uuid>`
 - `--agent-id-file <path>`
 
-Основные env:
+Env:
 
 - `VOIDMETRICS_CORE_URL`
 - `VOIDMETRICS_AGENT_TOKEN`
@@ -189,7 +194,8 @@ docker build -t voidmetrics-agent .
 
 ```bash
 docker run --rm \
-  -e VOIDMETRICS_CORE_URL=ws://host.docker.internal:3000/ws \
-  -e VOIDMETRICS_AGENT_TOKEN=YOUR_TOKEN \
+  -e VOIDMETRICS_CORE_URL=wss://YOUR_HOST/ws \
+  -e VOIDMETRICS_AGENT_TOKEN=YOUR_AGENT_TOKEN \
+  -e VOIDMETRICS_AGENT_ID=YOUR_AGENT_ID \
   voidmetrics-agent
 ```
