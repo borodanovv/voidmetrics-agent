@@ -1,73 +1,47 @@
 # VoidMetrics Agent
 
-Standalone repository for the VoidMetrics host agent. This repo contains only the Rust agent, cross-platform release packaging, and a short API guide for the main VoidMetrics server.
+Отдельный репозиторий агента VoidMetrics.
 
-## What Is Included
+Здесь лежат:
 
-- Rust source for `voidmetrics-agent`
-- release packaging script for macOS, Linux, and Windows
-- GitHub Actions workflow for tagged releases
-- ready-made release archives in [releases](./releases)
-- quick run guide and main server endpoint reference
+- Rust-исходники `voidmetrics-agent`
+- скрипт сборки релизных архивов
+- готовые архивы в [releases](./releases)
+- краткая документация по подключению агента к `core`
 
-## Supported Release Targets
+## Что важно понимать
 
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-- `x86_64-pc-windows-msvc`
-- `i686-pc-windows-msvc`
-- `aarch64-pc-windows-msvc`
+Агенту для работы нужен только WebSocket `core`:
 
-Current prebuilt archives committed in this repo:
+- `WS /ws`
 
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-unknown-linux-gnu`
-- `aarch64-unknown-linux-gnu`
-- `x86_64-pc-windows-msvc`
+HTTP-часть нужна оператору или внешнему слою только для установки, скачивания архива и чтения текущего состояния.
 
-Extra Windows variants are produced by the GitHub Actions release workflow.
+## Быстрый старт
 
-## Quick Start
+1. Скачайте архив из [releases](./releases) или из GitHub Releases.
+2. Распакуйте его.
+3. Запустите агент с URL `core` и токеном.
 
-### 1. Download A Release
-
-Use one of the archives from [releases](./releases) or from GitHub Releases after tagging.
-
-### 2. Unpack It
-
-Each release archive contains:
-
-- `voidmetrics-agent` or `voidmetrics-agent.exe`
-- `start-local`
-- `start-external`
-- `agent.env.example`
-
-### 3. Point The Agent To Core
-
-Local operator setup:
+Локальное подключение:
 
 ```bash
 ./voidmetrics-agent --core-url ws://YOUR_CORE_HOST:3000/ws --auth-key YOUR_LOCAL_TOKEN
 ```
 
-External/public setup:
+Публичное подключение:
 
 ```bash
 ./voidmetrics-agent --core-url wss://YOUR_PUBLIC_HOST/ws --auth-key YOUR_EXTERNAL_TOKEN
 ```
 
-Background mode:
+Фоновый режим:
 
 ```bash
 ./voidmetrics-agent --daemon --core-url ws://YOUR_CORE_HOST:3000/ws --auth-key YOUR_TOKEN
 ```
 
-### 4. Or Run Through Environment Variables
-
-Linux or macOS:
+Через переменные окружения:
 
 ```bash
 export VOIDMETRICS_CORE_URL=ws://YOUR_CORE_HOST:3000/ws
@@ -83,34 +57,111 @@ $env:VOIDMETRICS_AGENT_TOKEN = "YOUR_TOKEN"
 .\voidmetrics-agent.exe --daemon
 ```
 
-## Windows Launchers
+## Автоматический сценарий установки
 
-Windows archives include:
+Текущий API подходит для автоустановки без ручного копирования команд в UI.
 
-- `start-local.ps1`
-- `start-external.ps1`
+Рекомендуемый поток такой:
 
-Examples:
+1. Внешний слой проверяет `GET /api/setup`.
+2. Получает список архивов через `GET /api/agent-releases`.
+3. Скачивает нужный файл через `GET /api/agent-releases/{file}`.
+4. Берёт install-token из своего секрета, env или secret store.
+5. Запускает агент с `--core-url` и `--auth-key`.
+6. После подключения агент сам появляется в live-срезе.
 
-```powershell
-.\start-local.ps1 -CoreUrl "ws://YOUR_CORE_HOST:3000/ws" -Token "YOUR_LOCAL_TOKEN"
+Важно:
+
+- `core` не выдаёт install-token через HTTP;
+- токен надо передавать установщику из безопасного внешнего контура;
+- для текущей версии это правильнее, чем открывать общий токен через публичный API.
+
+Если нужно заранее завести карточку агента в реестре, можно дополнительно вызвать:
+
+- `POST /api/registered-agents`
+
+Пример payload:
+
+```json
+{
+  "name": "node-01",
+  "group_id": "default",
+  "labels": ["prod", "eu-west"],
+  "desired_config": {
+    "interval_seconds": 1,
+    "process_interval_seconds": 2,
+    "process_limit": 220
+  },
+  "install_mode": "standalone"
+}
 ```
 
-```powershell
-.\start-external.ps1 -CoreUrl "wss://YOUR_PUBLIC_HOST/ws" -Token "YOUR_EXTERNAL_TOKEN" -Daemon
+Этот вызов создаёт запись в реестре, но не выдаёт отдельный токен на агента.
+
+## Какие эндпоинты реально нужны
+
+### Подключение и установка
+
+- `GET /api/setup`
+- `GET /api/agent-releases`
+- `GET /api/agent-releases/{file}`
+- `WS /ws`
+
+### Live API оператора
+
+- `GET /api/agents`
+- `GET /api/agents/{id}`
+- `WS /live`
+
+### Внешний read-only API
+
+- `GET /api/external/agents`
+- `GET /api/external/agents/{id}`
+
+Для внешнего API используйте:
+
+```text
+Authorization: Bearer <VOIDMETRICS_EXTERNAL_AGENT_TOKEN>
 ```
 
-## Agent Configuration
+## Один endpoint для статистики
 
-Important runtime options:
+Если нужен единый JSON-срез по машине без лишних routes, используйте:
 
-- `--core-url <ws-url>`: override `VOIDMETRICS_CORE_URL`
-- `--auth-key <token>`: override `VOIDMETRICS_AGENT_TOKEN`
-- `--daemon`: run in background
-- `--agent-id <uuid>`: pin the agent ID
-- `--agent-id-file <path>`: where the agent stores its ID
+- операторский контур: `GET /api/agents/{id}`
+- внешний контур: `GET /api/external/agents/{id}`
 
-Important env vars:
+Оба ответа уже содержат общий объект `metrics`, где лежат:
+
+- CPU: `cpu_usage`, `cpu_cores`, `load_1`, `load_5`, `load_15`
+- RAM: `ram_used`, `ram_total`, `swap_used`, `swap_total`
+- Disk: `disk_used`, `disk_total`, `disk_usage_percent`, `disk_read_bytes`, `disk_written_bytes`
+- Network: `network_received_bytes`, `network_transmitted_bytes`
+- GPU: `gpu_usage_percent`, `gpu_memory_used`, `gpu_temperature_celsius`
+
+То есть для CPU, RAM и Disk не нужен отдельный набор endpoint-ов: достаточно одного `GET /api/agents/{id}` или `GET /api/external/agents/{id}`.
+
+## Что намеренно не включено в эту документацию
+
+Здесь специально не перечислены:
+
+- history/CSV export routes;
+- operator command/shutdown routes;
+- group CRUD и служебные registry-маршруты.
+
+Они могут использоваться внутренним UI, но не нужны для обычной установки агента и только перегружают публичную документацию.
+
+## Конфигурация агента
+
+CLI-опции:
+
+- `--core-url <ws-url>`
+- `--auth-key <token>`
+- `--daemon`
+- `--agent-id <uuid>`
+- `--agent-id-file <path>`
+
+Основные env:
 
 - `VOIDMETRICS_CORE_URL`
 - `VOIDMETRICS_AGENT_TOKEN`
@@ -128,113 +179,41 @@ Important env vars:
 - `VOIDMETRICS_MAX_COMMAND_LENGTH`
 - `VOIDMETRICS_MAX_PATH_LENGTH`
 
-## Main Server Endpoints
+## Сборка
 
-The agent itself only needs the WebSocket endpoint:
-
-- `GET /ws` - main agent connection endpoint
-
-Useful operator endpoints on the main server:
-
-- `GET /api/setup` - returns token setup state and the agent WebSocket path
-- `GET /api/agent-releases` - list downloadable agent archives
-- `GET /api/agent-releases/{file}` - download a concrete agent archive
-- `GET /api/agents` - list live agents
-- `GET /api/agents/{id}` - get one live agent
-- `POST /api/agents/{id}/commands` - send an agent command
-- `POST /api/agents/{id}/shutdown` - stop a connected agent
-- `GET /api/agents/{id}/history?metric=<name>&range=<range>` - time-series history
-- `GET /api/agents/{id}/history.csv?metric=<name>&range=<range>` - export history CSV
-- `GET /api/agents/{id}/export.csv` - export current agent snapshot CSV
-
-Registry and grouping endpoints on the main server:
-
-- `GET /api/registry`
-- `GET /api/agent-groups`
-- `POST /api/agent-groups`
-- `DELETE /api/agent-groups/{id}`
-- `GET /api/registered-agents`
-- `POST /api/registered-agents`
-- `GET /api/registered-agents/{id}`
-- `DELETE /api/registered-agents/{id}`
-- `POST /api/registered-agents/{id}/config`
-- `POST /api/registered-agents/{id}/move`
-
-External read-only API:
-
-- `GET /api/external/agents`
-- `GET /api/external/agents/{id}`
-
-For external endpoints use:
-
-```text
-Authorization: Bearer <VOIDMETRICS_EXTERNAL_AGENT_TOKEN>
-```
-
-## Agent Commands Accepted By Core
-
-These actions are accepted by `POST /api/agents/{id}/commands`:
-
-- `set_process_stream`
-- `reconnect`
-- `refresh_inventory`
-- `diagnose`
-- `docker_ps`
-- `logs`
-
-## Build From Source
-
-Local build:
+Локально:
 
 ```bash
 cargo build --release
 ```
 
-Run help:
+Справка:
 
 ```bash
 cargo run -- --help
 ```
 
-## Build Release Archives
-
-Current host only:
+Сборка архивов для текущей платформы:
 
 ```bash
 ./scripts/build-agent-releases.sh
 ```
 
-Full matrix:
+Полная матрица:
 
 ```bash
 ./scripts/build-agent-releases.sh --all
 ```
 
-Build output goes to `./releases` by default.
-
-Requirements for cross-builds:
-
-- `rustup`
-- `zip`
-- `zig` for non-host Linux cross-compilation
-- `cargo-xwin` for `*-pc-windows-msvc`
-
-## GitHub Releases
-
-This repo ships a workflow in `.github/workflows/release.yml`.
-
-- `workflow_dispatch` builds archives and uploads them as artifacts
-- pushing a tag like `v0.1.0` builds archives and publishes a GitHub Release
-
 ## Docker
 
-Build image:
+Сборка:
 
 ```bash
 docker build -t voidmetrics-agent .
 ```
 
-Run image:
+Запуск:
 
 ```bash
 docker run --rm \
